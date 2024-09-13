@@ -7,8 +7,6 @@ import logger from "./logger.js";
 import {
   handleFirstScan,
   handleSecondScan,
-  initSerialPort,
-  watchCodeFile,
 } from "./services/serialPortService.js";
 import { MockSerialPort } from "./services/mockSerialPort.js";
 import { fileURLToPath } from "url";
@@ -148,7 +146,7 @@ app.prepare().then(() => {
       // runContinuousScan().catch((error) => {
       //   logger.error("Continuous scan process crashed:", error);
       // });
-      await runContinuousScan();
+      // await runContinuousScan();
     } catch (error) {
       logger.error("Failed to initialize Modbus connection:", error);
     }
