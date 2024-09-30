@@ -47,6 +47,35 @@ function emitErrorEvent(socket, errorType, errorMessage) {
   logger.error(`${errorType}: ${errorMessage}`);
 }
 
+// Server-side normalization function
+const normalizeServoSettings = (settings) => {
+  const normalized = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (key === "fwdEndLimit" || key === "revEndLimit") {
+      normalized[key] = {
+        register: value.register,
+        value: value.value,
+      };
+    } else {
+      normalized[key] = {
+        position: {
+          register:
+            typeof value.position === "object" ? value.position.register : "",
+          value:
+            typeof value.position === "object"
+              ? value.position.value
+              : value.position,
+        },
+        speed: {
+          register: value.speed.register,
+          value: value.speed.value,
+        },
+      };
+    }
+  }
+  return normalized;
+};
+
 // function floatToInt(value) {
 //   return Math.round(parseFloat(value) * 100);
 // }
@@ -63,6 +92,59 @@ function floatToInt(value, isSpeed = false) {
 //   // Remove the decimal point, concatenate all digits, and convert to integer
 //   return parseInt(value.toString().replace(".", ""), 10);
 // }
+
+// Mock functions for hardware communication (replace with actual hardware functions)
+const readServoSetting = async (register) => {
+  // This should be replaced with actual hardware communication
+  console.log({ register });
+  const d = await readRegister(register, 1);
+  return d[0];
+};
+
+const writeServoSetting = async (register, value) => {
+  // This should be replaced with actual hardware communication
+  return await writeRegister(register, value);
+};
+
+const servoSettings = {
+  homePosition: {
+    position: { register: "550", value: 0 },
+    speed: { register: "552", value: 0 },
+  },
+  scannerPosition: {
+    position: { register: "554", value: 0 },
+    speed: { register: "556", value: 0 },
+  },
+  ocrPosition: {
+    position: { register: "558", value: 0 },
+    speed: { register: "560", value: 0 },
+  },
+  markPosition: {
+    position: { register: "562", value: 0 },
+    speed: { register: "564", value: 0 },
+  },
+  fwdEndLimit: { register: "574", value: 0 },
+  revEndLimit: { register: "578", value: 0 },
+};
+
+const updateServoSettings = async () => {
+  console.log({ servoSettings });
+  // debugger;
+  for (const [key, value] of Object.entries(servoSettings)) {
+    if (typeof value === "object" && value !== null) {
+      if ("position" in value && "speed" in value) {
+        value.position.value = await readServoSetting(
+          parseInt(value.position.register, 10)
+        );
+        value.speed.value = await readServoSetting(
+          parseInt(value.speed.register, 10)
+        );
+      } else {
+        value.value = await readServoSetting(parseInt(value.register, 10));
+      }
+    }
+  }
+};
 
 app.prepare().then(() => {
   const server = createServer((req, res) => {
@@ -166,67 +248,41 @@ app.prepare().then(() => {
     socket.on("servo-setting-change", async (data) => {
       try {
         const { setting, value } = data;
-        let register;
-        let intValue;
 
-        switch (setting) {
-          case "homePosition":
-            if (value.position !== undefined) {
-              register = 550;
-              intValue = floatToInt(value.position);
-            } else {
-              register = 560;
-              intValue = floatToInt(value.speed, true);
-            }
-            break;
-          case "scannerPosition":
-            if (value.position !== undefined) {
-              register = 552;
-              intValue = floatToInt(value.position);
-            } else {
-              register = 562;
-              intValue = floatToInt(value.speed, true);
-            }
-            break;
-          case "ocrPosition":
-            if (value.position !== undefined) {
-              register = 554;
-              intValue = floatToInt(value.position);
-            } else {
-              register = 564;
-              intValue = floatToInt(value.speed, true);
-            }
-            break;
-          case "markPosition":
-            if (value.position !== undefined) {
-              register = 556;
-              intValue = floatToInt(value.position);
-            } else {
-              register = 566;
-              intValue = floatToInt(value.speed, true);
-            }
-            break;
-          case "fwdEndLimit":
-            register = 574;
-            intValue = floatToInt(value.position);
-            break;
-          case "revEndLimit":
-            register = 578;
-            intValue = floatToInt(value.position);
-            break;
-          default:
-            throw new Error("Invalid setting");
+        if (!servoSettings[setting]) {
+          throw new Error("Invalid setting");
         }
 
-        await writeRegister(register, intValue);
+        let register, intValue;
+        const isEndLimit =
+          setting === "fwdEndLimit" || setting === "revEndLimit";
+
+        if (isEndLimit) {
+          register = servoSettings[setting].register;
+          intValue = floatToInt(value);
+          servoSettings[setting].value = value;
+        } else {
+          const subSetting = value?.hasOwnProperty("position")
+            ? "position"
+            : "speed";
+          register = servoSettings[setting][subSetting].register;
+          intValue = floatToInt(value[subSetting], subSetting === "speed");
+          servoSettings[setting][subSetting].value = value[subSetting];
+        }
+
+        await writeRegister(parseInt(register, 10), intValue);
+
         logger.info(
-          `Client ${socket.id} updated ${setting} to ${JSON.stringify(value)} (written as ${intValue})`
+          `Client ${socket.id} updated ${setting} to ${JSON.stringify(value)} (written as ${intValue} to register ${register})`
         );
 
         socket.emit("servo-setting-change-response", {
           success: true,
           setting,
         });
+
+        // Broadcast the updated settings to all connected clients
+        io.emit("servo-settings-update", servoSettings);
       } catch (error) {
         logger.error(
           `Error updating servo setting for client ${socket.id}:`,
@@ -236,6 +292,49 @@ app.prepare().then(() => {
           success: false,
           setting: data.setting,
           message: error.message,
+        });
+      }
+    });
+
+    socket.on("request-servo-settings", async () => {
+      try {
+        await updateServoSettings();
+        const normalizedSettings = normalizeServoSettings(servoSettings);
+        socket.emit("servo-settings-update", normalizedSettings);
+      } catch (error) {
+        logger.error("Error fetching servo settings:", error);
+        socket.emit("error", { message: "Failed to fetch servo settings" });
+      }
+    });
+
+    socket.on("servo-setting-change", async ({ setting, value }) => {
+      try {
+        const settingObj = servoSettings[setting];
+        if (settingObj) {
+          if (typeof value === "object") {
+            for (const [subKey, subValue] of Object.entries(value)) {
+              await writeServoSetting(
+                settingObj[subKey].register,
+                parseFloat(subValue)
+              );
+              settingObj[subKey].value = parseFloat(subValue);
+            }
+          } else {
+            await writeServoSetting(settingObj.register, parseFloat(value));
+            settingObj.value = parseFloat(value);
+          }
+          socket.emit("servo-setting-change-response", {
+            key: setting,
+            success: true,
+          });
+        } else {
+          throw new Error("Invalid setting");
+        }
+      } catch (error) {
+        logger.error(`Error changing servo setting ${setting}:`, error);
+        socket.emit("servo-setting-change-response", {
+          key: setting,
+          success: false,
         });
       }
     });

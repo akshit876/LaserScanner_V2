@@ -6,12 +6,24 @@ import "react-toastify/dist/ReactToastify.css";
 
 const ServoSettings = () => {
   const [settings, setSettings] = useState({
-    homePosition: { position: "234.56", speed: "1000" },
-    scannerPosition: { position: "234.56", speed: "1000" },
-    ocrPosition: { position: "234.56", speed: "1000" },
-    markPosition: { position: "234.56", speed: "1000" },
-    fwdEndLimit: "234.56",
-    revEndLimit: "234.56",
+    homePosition: {
+      position: { value: "", register: "" },
+      speed: { value: "", register: "" },
+    },
+    scannerPosition: {
+      position: { value: "", register: "" },
+      speed: { value: "", register: "" },
+    },
+    ocrPosition: {
+      position: { value: "", register: "" },
+      speed: { value: "", register: "" },
+    },
+    markPosition: {
+      position: { value: "", register: "" },
+      speed: { value: "", register: "" },
+    },
+    fwdEndLimit: { value: "", register: "" },
+    revEndLimit: { value: "", register: "" },
   });
 
   const [loading, setLoading] = useState({
@@ -23,39 +35,70 @@ const ServoSettings = () => {
     servoocrposition: false,
     servomarkposition: false,
   });
-  const inputRefs = useRef({}); // Create refs for input elements
+
+  const inputRefs = useRef({});
   const socket = useSocket();
 
   useEffect(() => {
     if (socket) {
-      //   socket.on("servo-settings-update", (data) => {
-      //     setSettings((prevSettings) => ({ ...prevSettings, ...data }));
-      //   });
-      //   socket.on("servo-setting-change-response", (response) => {
-      //     setLoading((prev) => ({ ...prev, [response.key]: false }));
-      //     if (response.success) {
-      //       toast.success("Setting updated successfully!");
-      //     } else {
-      //       toast.error("Failed to update setting. Please try again.");
-      //     }
-      //   });
-      //   socket.on("manual-run-response", (response) => {
-      //     setLoading((prev) => ({ ...prev, [response.operation]: false }));
-      //     if (response.success) {
-      //       toast.success(
-      //         `Operation ${response.operation} completed successfully`
-      //       );
-      //     } else {
-      //       toast.error(`Failed to execute operation ${response.operation}`);
-      //     }
-      //   });
+      socket.emit("request-servo-settings");
+
+      socket.on("servo-settings-update", (normalizedData) => {
+        setSettings(normalizedData);
+        // Update ref values
+        Object.keys(normalizedData).forEach((key) => {
+          if (
+            typeof normalizedData[key] === "object" &&
+            normalizedData[key] !== null
+          ) {
+            if (
+              "position" in normalizedData[key] &&
+              "speed" in normalizedData[key]
+            ) {
+              if (inputRefs.current[key]) {
+                inputRefs.current[key].position.value =
+                  normalizedData[key].position.value;
+                inputRefs.current[key].speed.value =
+                  normalizedData[key].speed.value;
+              }
+            } else {
+              // eslint-disable-next-line no-lonely-if
+              if (inputRefs.current[key]) {
+                inputRefs.current[key].value = normalizedData[key].value;
+              }
+            }
+          }
+        });
+      });
+
+      socket.on("servo-setting-change-response", (response) => {
+        setLoading((prev) => ({ ...prev, [response.setting]: false }));
+        if (response.success) {
+          toast.success("Setting updated successfully!");
+          socket.emit("request-servo-settings");
+        } else {
+          toast.error("Failed to update setting. Please try again.");
+        }
+      });
+
+      socket.on("manual-run-response", (response) => {
+        setLoading((prev) => ({ ...prev, [response.operation]: false }));
+        if (response.success) {
+          toast.success(
+            `Operation ${response.operation} completed successfully`
+          );
+          socket.emit("request-servo-settings");
+        } else {
+          toast.error(`Failed to execute operation ${response.operation}`);
+        }
+      });
     }
+
     return () => {
       if (socket) {
         socket.off("servo-settings-update");
         socket.off("servo-setting-change-response");
         socket.off("manual-run-response");
-        socket.off("servo-setting-change");
       }
     };
   }, [socket]);
@@ -70,23 +113,45 @@ const ServoSettings = () => {
   };
 
   const handleInputBlur = (key, subKey) => {
-    const value = inputRefs.current[key][subKey].value;
-    const isPosition =
-      subKey === "position" || key === "fwdEndLimit" || key === "revEndLimit";
+    let value, isPosition;
+    if (subKey) {
+      value = inputRefs.current[key][subKey].value;
+      isPosition = subKey === "position";
+    } else {
+      value = inputRefs.current[key].value;
+      isPosition = key === "fwdEndLimit" || key === "revEndLimit";
+    }
+
     if (validateInput(value, isPosition)) {
-      setSettings((prev) => ({
-        ...prev,
-        [key]: subKey ? { ...prev[key], [subKey]: value } : value,
-      }));
+      setSettings((prev) => {
+        if (subKey) {
+          return {
+            ...prev,
+            [key]: {
+              ...prev[key],
+              [subKey]: {
+                ...prev[key][subKey],
+                value: value,
+              },
+            },
+          };
+        } else {
+          return {
+            ...prev,
+            [key]: {
+              ...prev[key],
+              value: value,
+            },
+          };
+        }
+      });
+
       if (socket) {
         setLoading((prev) => ({ ...prev, [key]: true }));
-        console.log({
-          setting: key,
-          value: subKey ? { [subKey]: value } : value,
-        });
+        const emitValue = subKey ? { [subKey]: value } : value;
         socket.emit("servo-setting-change", {
           setting: key,
-          value: subKey ? { [subKey]: value } : value,
+          value: emitValue,
         });
       }
     } else {
@@ -98,8 +163,10 @@ const ServoSettings = () => {
         }`
       );
       // Revert the input value to the original settings value if validation fails
-      if (inputRefs.current[key] && inputRefs.current[key][subKey]) {
-        inputRefs.current[key][subKey].value = settings[key][subKey];
+      if (subKey) {
+        inputRefs.current[key][subKey].value = settings[key][subKey].value;
+      } else {
+        inputRefs.current[key].value = settings[key].value;
       }
     }
   };
@@ -108,38 +175,26 @@ const ServoSettings = () => {
     if (socket) {
       setLoading((prev) => ({ ...prev, [operation]: true }));
       socket.emit("manual-run", operation);
-      setTimeout(() => {
-        setLoading((prev) => ({ ...prev, [operation]: false }));
-      }, 200);
     }
   };
 
-  const handleInputKeyDown = (e, key, subKey) => {
-    if (e.key === "Enter") {
-      handleInputBlur(key, subKey);
-    }
-  };
-
-  const InputValue = ({
-    value,
-    register,
-    onBlur,
-    onKeyDown,
-    inputKey,
-    subKey,
-  }) => (
+  const InputValue = ({ value, register, onBlur, inputKey, subKey }) => (
     <div className="relative bg-black border border-green-500 w-32 h-12 rounded-md overflow-hidden">
       <input
         type="text"
         defaultValue={value}
         ref={(el) => {
-          if (!inputRefs.current[inputKey]) {
-            inputRefs.current[inputKey] = {};
+          if (subKey) {
+            if (!inputRefs.current[inputKey]) {
+              inputRefs.current[inputKey] = {};
+            }
+            inputRefs.current[inputKey][subKey] = el;
+          } else {
+            inputRefs.current[inputKey] = el;
           }
-          inputRefs.current[inputKey][subKey] = el;
         }}
         onBlur={() => onBlur(inputKey, subKey)}
-        onKeyDown={(e) => onKeyDown(e, inputKey, subKey)} // Handle key down events
+        onKeyDown={(e) => e.key === "Enter" && onBlur(inputKey, subKey)}
         className="w-full h-full bg-transparent text-green-400 font-bold text-2xl px-2 text-right focus:outline-none focus:ring-2 focus:ring-green-500"
       />
       <div className="absolute bottom-0 left-1 text-[10px] text-white">
@@ -201,20 +256,27 @@ const ServoSettings = () => {
               </span>
               <div className="flex space-x-4 items-center">
                 <InputValue
-                  value={settings[`${position.toLowerCase()}Position`].position}
-                  register={`D55${index}`}
+                  value={
+                    settings[`${position.toLowerCase()}Position`].position.value
+                  }
+                  register={
+                    settings[`${position.toLowerCase()}Position`].position
+                      .register
+                  }
                   inputKey={`${position.toLowerCase()}Position`}
                   subKey="position"
                   onBlur={handleInputBlur}
-                  onKeyDown={handleInputKeyDown} // Pass key down handler
                 />
                 <InputValue
-                  value={settings[`${position.toLowerCase()}Position`].speed}
-                  register={`D56${index}`}
+                  value={
+                    settings[`${position.toLowerCase()}Position`].speed.value
+                  }
+                  register={
+                    settings[`${position.toLowerCase()}Position`].speed.register
+                  }
                   inputKey={`${position.toLowerCase()}Position`}
                   subKey="speed"
                   onBlur={handleInputBlur}
-                  onKeyDown={handleInputKeyDown} // Pass key down handler
                 />
                 <div className="w-4"></div>
                 <PositionButton
@@ -232,12 +294,11 @@ const ServoSettings = () => {
             </span>
             <div className="flex space-x-4 items-center">
               <InputValue
-                value={settings.fwdEndLimit}
-                register="D574"
+                value={settings.fwdEndLimit.value}
+                register={settings.fwdEndLimit.register}
                 inputKey="fwdEndLimit"
                 subKey={null}
                 onBlur={handleInputBlur}
-                onKeyDown={handleInputKeyDown} // Pass key down handler
               />
               <PositionButton
                 label="JOG FWD"
@@ -253,12 +314,11 @@ const ServoSettings = () => {
             </span>
             <div className="flex space-x-4 items-center">
               <InputValue
-                value={settings.revEndLimit}
-                register="D578"
+                value={settings.revEndLimit.value}
+                register={settings.revEndLimit.register}
                 inputKey="revEndLimit"
                 subKey={null}
                 onBlur={handleInputBlur}
-                onKeyDown={handleInputKeyDown} // Pass key down handler
               />
               <PositionButton
                 label="JOG REV"
