@@ -1,13 +1,12 @@
 import NextAuth from "next-auth";
-import CredentialsProvider from "next-auth/providers/credentials";
+import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcrypt";
-import mongoDbService from "../../../../services/mongoDbService";
+import mongoDbService from "../../../../../services/mongoDbService";
 // Adjust this import to match your MongoDB service file
 
 export const authOptions = {
   providers: [
-    CredentialsProvider({
-      name: "Credentials",
+    Credentials.default({
       credentials: {
         username: { label: "Username", type: "text" },
         password: { label: "Password", type: "password" },
@@ -66,7 +65,7 @@ export const authOptions = {
     signIn: "/auth/signin",
   },
 };
-
+console.log({ aa: process.env.NEXTAUTH_SECRET });
 const handler = NextAuth(authOptions);
 
 export { handler as GET, handler as POST };

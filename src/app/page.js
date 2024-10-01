@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { Calendar, CalendarIcon } from "lucide-react";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
+import { useProtectedRoute } from "../../hooks/useProtectedRoute";
 // import { useProtectedRoute } from "../../hooks/useProtectedRoute";
 
 function AdminPanel() {
@@ -21,6 +22,16 @@ function AdminPanel() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  const { session, status } = useProtectedRoute();
+
+  if (status === "loading") {
+    return <div>Loading...</div>;
+  }
+
+  if (!session) {
+    return null;
+  }
 
   const handleDownloadCSV = async () => {
     // Implement CSV download logic here
